@@ -28,6 +28,25 @@ contract Orderbook is IOrderbook {
     IERC20 public immutable baseToken;
     IERC20 public immutable quoteToken;
 
+    struct Order {
+        uint256 id;
+        address addr;
+        Side side;
+        uint256 price;
+        uint256 amount;
+        uint256 next;
+        uint256 prev;
+    }
+
+    mapping(uint256 => Order) public orders;
+    uint256 public numBuys;
+    uint256 public numSells;
+    uint256 public bestBuyId;
+    uint256 public worstBuyId;
+    uint256 public bestSellId;
+    uint256 public worstSellId;
+    uint256 private nextOrderId = 1;
+
     /// @dev Suggested events. These are a starting point — your
     ///      implementation may emit a different set, rename them, or omit
     ///      events entirely. Nothing in the grading harness depends on
@@ -64,26 +83,238 @@ contract Orderbook is IOrderbook {
     }
 
     function placeLimitOrder(Side side, uint256 price, uint256 amount) external returns (uint256) {
-        revert("NotImplemented");
+        if (side == Side.BUY) {
+            uint256 currSellId = bestSellId;
+
+            while (amount > 0 && currSellId != 0 && price >= orders[currSellId].price) {
+                uint256 fillAmount = amount < orders[currSellId].amount ? amount : orders[currSellId].amount;
+                uint256 quoteAmount = (fillAmount * orders[currSellId].price) / 1e18;
+                
+                address seller = orders[currSellId].addr;
+                require(quoteToken.transferFrom(msg.sender, seller, quoteAmount), "quote transfer failed");
+                require(baseToken.transfer(msg.sender, fillAmount), "base transfer failed");
+
+                amount -= fillAmount;
+                orders[currSellId].amount -= fillAmount;
+
+                if (orders[currSellId].amount <= 0) {
+                    //pop from sell linked list
+                    uint256 nextId = orders[currSellId].next;
+                    bestSellId = nextId;
+
+                    if (nextId != 0) {
+                        orders[nextId].prev = 0;
+                    } else {
+                        worstSellId = 0;
+                    }
+                    numSells--;
+                    currSellId = nextId;
+                }
+            }
+            if (amount > 0) {
+                //insert into buy linked list 
+                require(quoteToken.transferFrom(msg.sender, address(this), (amount*price)/1e18), "quote transfer failed");
+                uint256 curr = bestBuyId;
+                uint prev = 0;
+                uint256 orderId = nextOrderId++;
+
+                while (curr != 0 && price <= orders[curr].price) {
+                    prev = curr;
+                    curr = orders[curr].next;
+                }
+
+                orders[orderId] = Order({
+                    id: orderId, 
+                    addr: msg.sender, 
+                    side: Side.BUY, 
+                    price: price, 
+                    amount: amount, 
+                    next: curr, 
+                    prev: prev
+                });
+
+                //empty list
+                if (prev == 0 && curr == 0) {
+                    bestBuyId = orderId;
+                    worstBuyId = orderId;
+                }
+                //front of list
+                else if (prev == 0) {
+                    bestBuyId = orderId;
+                    orders[curr].prev = orderId;
+                }
+                //back of list
+                else if (curr == 0) {
+                    worstBuyId = orderId;
+                    orders[prev].next = orderId;
+                }
+                //prev and curr exist
+                else {
+                    orders[curr].prev = orderId;
+                    orders[prev].next = orderId;
+                }
+                numBuys++;
+            }
+        }
+        else {
+            uint256 currBuyId = bestBuyId;
+
+            while (amount > 0 && currBuyId != 0 && price <= orders[currBuyId].price) {
+                uint256 fillAmount = amount < orders[currBuyId].amount ? amount : orders[currBuyId].amount;
+                uint256 quoteAmount = (fillAmount * orders[currBuyId].price) / 1e18;
+                
+                address buyer = orders[currBuyId].addr;
+                require(quoteToken.transfer(msg.sender, quoteAmount), "quote transfer failed");
+                require(baseToken.transferFrom(msg.sender, buyer, fillAmount), "base transfer failed");
+
+                amount -= fillAmount;
+                orders[currBuyId].amount -= fillAmount;
+
+                if (orders[currBuyId].amount <= 0) {
+                    //pop from buy linked list
+                    uint256 nextId = orders[currBuyId].next;
+                    bestBuyId = nextId;
+
+                    if (nextId != 0) {
+                        orders[nextId].prev = 0;
+                    } else {
+                        worstBuyId = 0;
+                    }
+                    numBuys--;
+                    currBuyId = nextId;
+                }
+            }
+            if (amount > 0) {
+                //insert into sell linked list 
+                require(baseToken.transferFrom(msg.sender, address(this), amount), "base transfer failed");
+                uint256 curr = bestSellId;
+                uint prev = 0;
+                uint256 orderId = nextOrderId++;
+
+                while (curr != 0 && price >= orders[curr].price) {
+                    prev = curr;
+                    curr = orders[curr].next;
+                }
+
+                orders[orderId] = Order({
+                    id: orderId, 
+                    addr: msg.sender, 
+                    side: Side.SELL, 
+                    price: price, 
+                    amount: amount, 
+                    next: curr, 
+                    prev: prev
+                });
+
+                //empty list
+                if (prev == 0 && curr == 0) {
+                    bestSellId = orderId;
+                    worstSellId = orderId;
+                }
+                //front of list
+                else if (prev == 0) {
+                    bestSellId = orderId;
+                    orders[curr].prev = orderId;
+                }
+                //back of list
+                else if (curr == 0) {
+                    worstSellId = orderId;
+                    orders[prev].next = orderId;
+                }
+                //prev and curr exist
+                else {
+                    orders[curr].prev = orderId;
+                    orders[prev].next = orderId;
+                }
+                numSells++;
+            }
+        }
     }
 
     function placeMarketOrder(Side side, uint256 amount) external {
-        revert("NotImplemented");
+        if (side == Side.BUY) {
+            uint256 currSellId = bestSellId;
+
+            while (amount > 0 && currSellId != 0) {
+                uint256 fillAmount = amount < orders[currSellId].amount ? amount : orders[currSellId].amount;
+                uint256 quoteAmount = (fillAmount * orders[currSellId].price) / 1e18;
+                
+                address seller = orders[currSellId].addr;
+                require(quoteToken.transferFrom(msg.sender, seller, quoteAmount), "quote transfer failed");
+                require(baseToken.transfer(msg.sender, fillAmount), "base transfer failed");
+
+                amount -= fillAmount;
+                orders[currSellId].amount -= fillAmount;
+
+                if (orders[currSellId].amount <= 0) {
+                    //pop from sell linked list
+                    uint256 nextId = orders[currSellId].next;
+                    bestSellId = nextId;
+
+                    if (nextId != 0) {
+                        orders[nextId].prev = 0;
+                    } else {
+                        worstSellId = 0;
+                    }
+                    numSells--;
+                    currSellId = nextId;
+                }
+            }
+        }
+        else {
+            uint256 currBuyId = bestBuyId;
+            while (amount > 0 && currBuyId != 0) {
+                uint256 fillAmount = amount < orders[currBuyId].amount ? amount : orders[currBuyId].amount;
+                uint256 quoteAmount = (fillAmount * orders[currBuyId].price) / 1e18;
+                
+                address buyer = orders[currBuyId].addr;
+                require(quoteToken.transfer(msg.sender, quoteAmount), "quote transfer failed");
+                require(baseToken.transferFrom(msg.sender, buyer, fillAmount), "base transfer failed");
+
+                amount -= fillAmount;
+                orders[currBuyId].amount -= fillAmount;
+
+                if (orders[currBuyId].amount <= 0) {
+                    //pop from buy linked list
+                    uint256 nextId = orders[currBuyId].next;
+                    bestBuyId = nextId;
+
+                    if (nextId != 0) {
+                        orders[nextId].prev = 0;
+                    } else {
+                        worstBuyId = 0;
+                    }
+                    numBuys--;
+                    currBuyId = nextId;
+                }
+            }
+        }
     }
 
     function clear() external {
-        revert("NotImplemented");
+        numBuys = 0;
+        numSells = 0;
+        bestBuyId = 0;
+        worstBuyId = 0;
+        bestSellId = 0;
+        worstSellId = 0;
+        nextOrderId = 1;
     }
 
     function getBidsCount() external view returns (uint256) {
-        revert("NotImplemented");
+        return numBuys;
     }
 
     function getAsksCount() external view returns (uint256) {
-        revert("NotImplemented");
+        return numSells;
     }
 
     function getMidPrice() external view returns (uint256) {
-        revert("NotImplemented");
+        if (bestBuyId == 0 || bestSellId == 0) {
+            revert("No bids or asks");
+        }
+        uint256 bestBid = orders[bestBuyId].price;
+        uint256 bestAsk = orders[bestSellId].price;
+        return (bestBid + bestAsk) / 2;
     }
 }
