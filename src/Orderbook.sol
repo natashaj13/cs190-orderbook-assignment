@@ -83,6 +83,8 @@ contract Orderbook is IOrderbook {
     }
 
     function placeLimitOrder(Side side, uint256 price, uint256 amount) external returns (uint256) {
+        uint256 orderId = nextOrderId++;
+
         if (side == Side.BUY) {
             uint256 currSellId = bestSellId;
 
@@ -108,6 +110,7 @@ contract Orderbook is IOrderbook {
                         worstSellId = 0;
                     }
                     numSells--;
+                    delete orders[currSellId];
                     currSellId = nextId;
                 }
             }
@@ -116,7 +119,6 @@ contract Orderbook is IOrderbook {
                 require(quoteToken.transferFrom(msg.sender, address(this), (amount*price)/1e18), "quote transfer failed");
                 uint256 curr = bestBuyId;
                 uint prev = 0;
-                uint256 orderId = nextOrderId++;
 
                 while (curr != 0 && price <= orders[curr].price) {
                     prev = curr;
@@ -164,8 +166,8 @@ contract Orderbook is IOrderbook {
                 uint256 quoteAmount = (fillAmount * orders[currBuyId].price) / 1e18;
                 
                 address buyer = orders[currBuyId].addr;
-                require(quoteToken.transfer(msg.sender, quoteAmount), "quote transfer failed");
                 require(baseToken.transferFrom(msg.sender, buyer, fillAmount), "base transfer failed");
+                require(quoteToken.transfer(msg.sender, quoteAmount), "quote transfer failed");
 
                 amount -= fillAmount;
                 orders[currBuyId].amount -= fillAmount;
@@ -181,6 +183,7 @@ contract Orderbook is IOrderbook {
                         worstBuyId = 0;
                     }
                     numBuys--;
+                    delete orders[currBuyId];
                     currBuyId = nextId;
                 }
             }
@@ -189,7 +192,6 @@ contract Orderbook is IOrderbook {
                 require(baseToken.transferFrom(msg.sender, address(this), amount), "base transfer failed");
                 uint256 curr = bestSellId;
                 uint prev = 0;
-                uint256 orderId = nextOrderId++;
 
                 while (curr != 0 && price >= orders[curr].price) {
                     prev = curr;
@@ -229,6 +231,7 @@ contract Orderbook is IOrderbook {
                 numSells++;
             }
         }
+        return orderId;
     }
 
     function placeMarketOrder(Side side, uint256 amount) external {
@@ -257,6 +260,7 @@ contract Orderbook is IOrderbook {
                         worstSellId = 0;
                     }
                     numSells--;
+                    delete orders[currSellId];
                     currSellId = nextId;
                 }
             }
@@ -268,8 +272,8 @@ contract Orderbook is IOrderbook {
                 uint256 quoteAmount = (fillAmount * orders[currBuyId].price) / 1e18;
                 
                 address buyer = orders[currBuyId].addr;
-                require(quoteToken.transfer(msg.sender, quoteAmount), "quote transfer failed");
                 require(baseToken.transferFrom(msg.sender, buyer, fillAmount), "base transfer failed");
+                require(quoteToken.transfer(msg.sender, quoteAmount), "quote transfer failed");
 
                 amount -= fillAmount;
                 orders[currBuyId].amount -= fillAmount;
@@ -285,6 +289,7 @@ contract Orderbook is IOrderbook {
                         worstBuyId = 0;
                     }
                     numBuys--;
+                    delete orders[currBuyId];
                     currBuyId = nextId;
                 }
             }
@@ -292,6 +297,18 @@ contract Orderbook is IOrderbook {
     }
 
     function clear() external {
+        uint256 currBuy = bestBuyId;
+        while (currBuy != 0) {
+            uint256 next = orders[currBuy].next;
+            delete orders[currBuy];
+            currBuy = next;
+        }
+        uint256 currSell = bestSellId;
+        while (currSell != 0) {
+            uint256 next = orders[currSell].next;
+            delete orders[currSell];
+            currSell = next;
+        }
         numBuys = 0;
         numSells = 0;
         bestBuyId = 0;
